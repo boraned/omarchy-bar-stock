@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """Market feed for the bar ticker.
 
-    fetch_markets.py [USD|CAD|TRY]
+    fetch_markets.py [CURRENCY]
 
 Prints one JSON object: status, display currency + its USD rate, assets (USD
-prices; the ticker converts them) and currency pairs (already final values).
-Without an argument the display currency saved in the watchlist is used.
+prices; the ticker converts them), currency pairs (already final values) and
+the currencies listed in the watchlist. Without an argument the display
+currency saved in the watchlist is used.
 """
 import json
 import os
+import re
 import sys
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
@@ -20,13 +22,28 @@ CONFIG = PROJECT_DIR / "markets.json"
 ALLOWED_MARKET_HOSTS = {"query1.finance.yahoo.com", "query2.finance.yahoo.com"}
 USER_AGENT = "omarchy-bar-stock/1.0"
 
-# Display currencies offered by the ticker popup. Yahoo's "<CODE>=X" chart is
-# the USD→CODE rate.
-CURRENCIES = {
-    "USD": {"symbol": "$", "name": "US Dollar"},
-    "CAD": {"symbol": "C$", "name": "Canadian Dollar"},
-    "TRY": {"symbol": "₺", "name": "Turkish Lira"},
+# Currencies the menu can add, with the symbol written before prices. Prices
+# can be shown in any currency Yahoo quotes as "<CODE>=X" (the USD→CODE rate);
+# the watchlist's "currencies" lists the ones in the menu, USD for a new user.
+CURRENCY_INFO = {
+    "USD": ("$", "US Dollar"), "EUR": ("€", "Euro"), "GBP": ("£", "British Pound"),
+    "JPY": ("¥", "Japanese Yen"), "CNY": ("¥", "Chinese Yuan"), "CAD": ("C$", "Canadian Dollar"),
+    "AUD": ("A$", "Australian Dollar"), "NZD": ("NZ$", "New Zealand Dollar"),
+    "CHF": ("CHF", "Swiss Franc"), "SEK": ("kr", "Swedish Krona"), "NOK": ("kr", "Norwegian Krone"),
+    "DKK": ("kr", "Danish Krone"), "ISK": ("kr", "Icelandic Krona"), "PLN": ("zł", "Polish Zloty"),
+    "CZK": ("Kč", "Czech Koruna"), "HUF": ("Ft", "Hungarian Forint"), "RON": ("lei", "Romanian Leu"),
+    "TRY": ("₺", "Turkish Lira"), "RUB": ("₽", "Russian Ruble"), "UAH": ("₴", "Ukrainian Hryvnia"),
+    "ILS": ("₪", "Israeli Shekel"), "AED": ("AED", "UAE Dirham"), "SAR": ("SAR", "Saudi Riyal"),
+    "QAR": ("QAR", "Qatari Riyal"), "KWD": ("KWD", "Kuwaiti Dinar"), "EGP": ("E£", "Egyptian Pound"),
+    "ZAR": ("R", "South African Rand"), "NGN": ("₦", "Nigerian Naira"), "KES": ("KSh", "Kenyan Shilling"),
+    "INR": ("₹", "Indian Rupee"), "PKR": ("₨", "Pakistani Rupee"), "BDT": ("৳", "Bangladeshi Taka"),
+    "IDR": ("Rp", "Indonesian Rupiah"), "MYR": ("RM", "Malaysian Ringgit"), "SGD": ("S$", "Singapore Dollar"),
+    "THB": ("฿", "Thai Baht"), "PHP": ("₱", "Philippine Peso"), "VND": ("₫", "Vietnamese Dong"),
+    "KRW": ("₩", "South Korean Won"), "TWD": ("NT$", "Taiwan Dollar"), "HKD": ("HK$", "Hong Kong Dollar"),
+    "MXN": ("MX$", "Mexican Peso"), "BRL": ("R$", "Brazilian Real"), "ARS": ("AR$", "Argentine Peso"),
+    "CLP": ("CL$", "Chilean Peso"), "COP": ("COL$", "Colombian Peso"), "PEN": ("S/", "Peruvian Sol"),
 }
+DEFAULT_CURRENCIES = ["USD"]
 # Quotes in minor units (pence, agorot, cents) → (major currency, divisor).
 MINOR_UNITS = {"GBp": ("GBP", 100), "GBX": ("GBP", 100), "ILA": ("ILS", 100), "ZAc": ("ZAR", 100)}
 
@@ -86,6 +103,32 @@ def save_config(config, path=None):
     temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
     temporary.write_text("\n".join(lines) + "\n", encoding="utf-8")
     os.replace(temporary, path)
+
+
+def configured_currencies(config):
+    """The currencies listed in the menu, in watchlist order (USD if none)."""
+    listed = config.get("currencies")
+    codes = []
+    for code in listed if isinstance(listed, list) else []:
+        code = str(code).strip().upper()
+        if re.fullmatch(r"[A-Z]{3}", code) and code not in codes:
+            codes.append(code)
+    return codes or list(DEFAULT_CURRENCIES)
+
+
+def currency_symbol(code):
+    return CURRENCY_INFO.get(code, (code, code))[0]
+
+
+def currency_name(code):
+    return CURRENCY_INFO.get(code, (code, code))[1]
+
+
+def display_currency(config):
+    """The saved display currency, or the first listed one when it isn't listed."""
+    codes = configured_currencies(config)
+    saved = str(config.get("display_currency") or "").upper()
+    return saved if saved in codes else codes[0]
 
 
 def validate_market_url(url):
@@ -184,14 +227,18 @@ def default_digits(price):
     return 4 if price is not None and abs(price) < 1 else 2
 
 
-def build_currency_pairs(quotes):
-    """Every cross among USD, CAD and TRY from USD-based Yahoo quotes."""
+def build_currency_pairs(quotes, codes=None):
+    """Every cross among the listed currencies from USD-based Yahoo quotes.
+
+    "BASE/TARGET" is how many TARGET one BASE buys (TRY/USD: dollars per lira).
+    """
+    codes = list(codes) if codes else list(quotes)
     pairs = []
-    for base, targets in (("USD", ("CAD", "TRY")),
-                          ("CAD", ("USD", "TRY")),
-                          ("TRY", ("CAD", "USD"))):
+    for base in codes:
         base_now, base_previous = quotes.get(base, (None, None))
-        for target in targets:
+        for target in codes:
+            if target == base:
+                continue
             target_now, target_previous = quotes.get(target, (None, None))
             rate = (target_now / base_now if base_now and target_now else None)
             prior = (target_previous / base_previous
@@ -200,7 +247,7 @@ def build_currency_pairs(quotes):
             pairs.append({
                 "symbol": f"{base}/{target}", "label": f"{base}/{target}",
                 "group": "CURRENCIES", "is_currency_pair": True,
-                "direct_target": True, "digits": 6 if base == "TRY" else 4,
+                "direct_target": True, "digits": 6 if rate is not None and rate < 0.1 else 4,
                 "price": rate, "change_pct": change,
             })
     return pairs
@@ -237,9 +284,10 @@ def fetch_asset(asset, rates):
 def main(argv=None):
     argv = sys.argv if argv is None else argv
     config = load_config()
-    requested = str(argv[1] if len(argv) > 1 else config.get("display_currency", "USD")).upper()
-    if requested not in CURRENCIES:
-        requested = "USD"
+    codes = configured_currencies(config)
+    requested = str(argv[1]).upper() if len(argv) > 1 else display_currency(config)
+    if requested not in codes:
+        requested = display_currency(config)
     try:
         with state_path().open(encoding="utf-8") as handle:
             old = json.load(handle)
@@ -249,19 +297,21 @@ def main(argv=None):
     assets = [asset for asset in config["assets"] if isinstance(asset, dict) and asset.get("symbol")]
     rates = {}
     with ThreadPoolExecutor(max_workers=8) as pool:
-        # USD→CAD and USD→TRY drive the display rate, FX pairs and conversions.
-        fx = {code: pool.submit(fetch_quote, f"{code}=X") for code in CURRENCIES if code != "USD"}
+        # USD→CODE for each listed currency drives the display rate, the FX
+        # pairs and most conversions.
+        fx = {code: pool.submit(fetch_quote, f"{code}=X") for code in codes if code != "USD"}
         for code, future in fx.items():
             quoted = future.result()
             rates[code] = (positive(quoted[0]), positive(quoted[1])) if quoted else (None, None)
         results = list(pool.map(lambda asset: fetch_asset(asset, rates), assets))
 
-    usd_quotes = {code: usd_rate(code, rates) for code in CURRENCIES}
+    usd_quotes = {code: usd_rate(code, rates) for code in codes}
     currency = {"source": "USD", "target": requested,
-                "symbol": CURRENCIES[requested]["symbol"],
+                "symbol": currency_symbol(requested),
                 "rate": usd_quotes[requested][0]}
     output = {"profile": requested, "status": "LOADING", "currency": currency, "assets": [],
-              "currencies": displayed_pairs(build_currency_pairs(usd_quotes), requested)}
+              "currencies": displayed_pairs(build_currency_pairs(usd_quotes, codes), requested),
+              "display_currencies": [{"code": code, "symbol": currency_symbol(code)} for code in codes]}
 
     successful = 0
     for asset, (price, previous_close, direct) in zip(assets, results):
@@ -277,9 +327,9 @@ def main(argv=None):
             successful += 1
             old[asset["symbol"]] = price
 
-    fx_live = [usd_quotes[code][0] is not None for code in CURRENCIES]
+    fx_live = [usd_quotes[code][0] is not None for code in codes if code != "USD"]
     output["status"] = ("LIVE" if successful == len(assets) and all(fx_live)
-                        else "PARTIAL" if successful or any(fx_live[1:])
+                        else "PARTIAL" if successful or any(fx_live)
                         else "OFFLINE")
     output["message"] = {"LIVE": "live", "PARTIAL": "some market or FX prices unavailable",
                          "OFFLINE": "connection unavailable; prices unavailable"}[output["status"]]

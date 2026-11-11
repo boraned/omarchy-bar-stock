@@ -3,7 +3,7 @@
 Scrolling stock, crypto and currency quotes for the [Omarchy](https://omarchy.org) bar. Right-click the ticker to change the display currency or add and remove stocks. The menu opens where you clicked and uses your Omarchy theme.
 
 - Quotes from Yahoo Finance, no API key. They refresh every 2 minutes and show green or red with the day's change.
-- **Currency**: show prices in USD, CAD or TRY. Currency pairs show each other currency priced in the one you picked, e.g. `TRY/USD` (dollars per lira) in USD mode.
+- **Currency**: prices start in US dollars. Add the currencies you want to convert to, then click one to show prices in it. With two or more, the ticker also shows each one priced in the one you picked, e.g. `TRY/USD` (dollars per lira) in USD mode.
 - **Watchlist**: search Yahoo Finance for stocks, ETFs, crypto, indices and futures, and add or remove them. Prices listed in other currencies are converted through USD.
 - Prices are written as `1.234,56`.
 
@@ -45,6 +45,8 @@ Right-click the ticker to open the menu.
 
 Clicking a result adds it (a check mark means it's already in your watchlist; click again to remove it). With the search empty, the list shows your watchlist with a × on each row.
 
+To add a currency, click **+** next to CURRENCY, type a code or name (`eur`, `yen`), then press Enter or click the match. Hover a currency and click its **×** to remove it; one always stays. Three currencies fit across the menu; with more, the row scrolls sideways (mouse wheel or drag).
+
 ## Watchlist file
 
 On first run the bundled watchlist (major indices, the largest US stocks, gold, oil, Bitcoin and Ethereum) is copied to `~/.config/omarchy/market-ticker/markets.json`, and the menu edits that copy. You can also edit it from a terminal:
@@ -54,7 +56,9 @@ cd ~/.config/omarchy/plugins/omarchy-bar-stock/market-feed
 python3 watchlist.py search tesla
 python3 watchlist.py add TSLA
 python3 watchlist.py remove TSLA
+python3 watchlist.py currency-add CAD
 python3 watchlist.py currency CAD
+python3 watchlist.py currency-remove CAD
 ```
 
 The last prices, used for the up and down arrows, are kept in `~/.local/state/omarchy/market-ticker/previous.json`.

@@ -77,7 +77,7 @@ class WatchlistTests(unittest.TestCase):
     def assets(self):
         return [a["symbol"] for a in feed.load_config()["assets"]]
 
-    def test_add_remove_and_currency_round_trip(self):
+    def test_add_and_remove_round_trip(self):
         quote = (250.0, 240.0, "USD", "Tesla, Inc.")
         with patch.object(feed, "fetch_quote", return_value=quote):
             watchlist.cmd_add("TSLA", "Tesla, Inc.")
@@ -86,10 +86,63 @@ class WatchlistTests(unittest.TestCase):
         self.assertEqual(feed.load_config()["assets"][1]["label"], "Tesla")
         watchlist.cmd_remove("aapl")
         self.assertEqual(self.assets(), ["TSLA"])
+
+    def currencies(self):
+        return feed.configured_currencies(feed.load_config())
+
+    def test_a_watchlist_without_currencies_lists_usd_only(self):
+        self.assertEqual(self.currencies(), ["USD"])
+        self.assertEqual(feed.display_currency(feed.load_config()), "USD")
+        with self.assertRaises(SystemExit):
+            watchlist.cmd_currency("EUR")  # not listed yet
+
+    def test_currencies_are_added_in_order_after_a_rate_check(self):
+        with patch.object(feed, "fetch_quote", return_value=(0.9, 0.9, "EUR", "")):
+            watchlist.cmd_currency_add("eur")
+            watchlist.cmd_currency_add("TRY")
+            watchlist.cmd_currency_add("EUR")  # already listed
+        self.assertEqual(self.currencies(), ["USD", "EUR", "TRY"])
         watchlist.cmd_currency("try")
         self.assertEqual(feed.load_config()["display_currency"], "TRY")
+        with patch.object(feed, "fetch_quote", return_value=None), self.assertRaises(SystemExit):
+            watchlist.cmd_currency_add("XYZ")  # Yahoo has no rate for it
         with self.assertRaises(SystemExit):
-            watchlist.cmd_currency("EUR")
+            watchlist.cmd_currency_add("EURO")
+        self.assertEqual(self.currencies(), ["USD", "EUR", "TRY"])
+
+    def test_removing_currencies_keeps_one_and_moves_the_display(self):
+        with patch.object(feed, "fetch_quote", return_value=(0.9, 0.9, "EUR", "")):
+            watchlist.cmd_currency_add("EUR")
+        watchlist.cmd_currency("EUR")
+        watchlist.cmd_currency_remove("eur")
+        self.assertEqual(self.currencies(), ["USD"])
+        self.assertEqual(feed.load_config()["display_currency"], "USD")
+        with self.assertRaises(SystemExit):
+            watchlist.cmd_currency_remove("USD")  # the last one stays
+        watchlist.cmd_currency_remove("JPY")  # not listed: nothing to do
+        self.assertEqual(self.currencies(), ["USD"])
+
+    def test_list_reports_the_listed_currencies(self):
+        path = feed.user_config_path()
+        config = json.loads(path.read_text(encoding="utf-8"))
+        config.update(currencies=["usd", "TRY", "TRY", "nope"], display_currency="JPY")
+        path.write_text(json.dumps(config), encoding="utf-8")
+        with patch("sys.stdout.write") as write:
+            watchlist.cmd_list()
+        data = json.loads("".join(call.args[0] for call in write.call_args_list))
+        self.assertEqual(data["currencies"], [{"code": "USD", "symbol": "$", "name": "US Dollar"},
+                                              {"code": "TRY", "symbol": "₺", "name": "Turkish Lira"}])
+        self.assertEqual(data["display_currency"], "USD")  # JPY isn't listed
+        self.assertEqual(data["assets"], [{"symbol": "AAPL", "label": "Apple"}])
+
+    def test_the_menu_can_add_many_currencies(self):
+        with patch("sys.stdout.write") as write:
+            watchlist.cmd_currencies()
+        known = json.loads("".join(call.args[0] for call in write.call_args_list))
+        codes = [entry["code"] for entry in known]
+        self.assertEqual(len(codes), len(set(codes)))
+        self.assertTrue({"USD", "EUR", "GBP", "JPY", "CAD", "TRY"} <= set(codes))
+        self.assertTrue(all(entry["symbol"] and entry["name"] for entry in known))
 
     def test_unknown_symbol_is_not_added(self):
         with patch.object(feed, "fetch_quote", return_value=None), self.assertRaises(SystemExit):
@@ -101,6 +154,56 @@ class WatchlistTests(unittest.TestCase):
         self.assertEqual(watchlist.short_name("Bitcoin USD", "BTC-USD"), "Bitcoin")
         self.assertEqual(watchlist.short_name("NVIDIA Corporation", "NVDA"), "NVIDIA")
         self.assertEqual(watchlist.short_name("", "XYZ"), "XYZ")
+
+
+class FeedOutputTests(unittest.TestCase):
+    """main() end to end with Yahoo stubbed out."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.env = patch.dict(os.environ, {"XDG_CONFIG_HOME": self.tmp.name + "/config",
+                                           "XDG_STATE_HOME": self.tmp.name + "/state"})
+        self.env.start()
+
+    def tearDown(self):
+        self.env.stop()
+        self.tmp.cleanup()
+
+    def run_main(self, quotes):
+        def fake_get_json(url):
+            symbol = url.split("/chart/")[1].split("?")[0].replace("%5E", "^")
+            if symbol not in quotes:
+                raise OSError("offline")
+            price, previous, currency = quotes[symbol]
+            return {"chart": {"result": [{"meta": {"regularMarketPrice": price,
+                                                   "chartPreviousClose": previous,
+                                                   "currency": currency}}]}}
+        with patch.object(feed, "get_json", side_effect=fake_get_json), patch("sys.stdout.write") as write:
+            feed.main(["fetch_markets.py"])
+        return json.loads("".join(call.args[0] for call in write.call_args_list))
+
+    def test_a_new_user_sees_dollars_and_no_pairs(self):
+        bundled = json.loads(feed.CONFIG.read_text(encoding="utf-8"))
+        self.assertEqual(bundled["currencies"], ["USD"])
+        out = self.run_main({a["symbol"]: (100.0, 99.0, "USD") for a in bundled["assets"]})
+        self.assertTrue(feed.user_config_path().is_file())
+        self.assertEqual(out["status"], "LIVE")
+        self.assertEqual(out["currency"]["target"], "USD")
+        self.assertEqual(out["display_currencies"], [{"code": "USD", "symbol": "$"}])
+        self.assertEqual(out["currencies"], [])
+
+    def test_listed_currencies_drive_the_rate_and_pairs(self):
+        path = feed.user_config_path()
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({"display_currency": "TRY", "currencies": ["USD", "CAD", "TRY"],
+                                    "assets": [{"symbol": "THYAO.IS", "label": "THY", "digits": 2}]}),
+                        encoding="utf-8")
+        out = self.run_main({"CAD=X": (1.4, 1.4, "CAD"), "TRY=X": (50.0, 50.0, "TRY"),
+                             "THYAO.IS": (300.0, 290.0, "TRY")})
+        self.assertEqual(out["currency"], {"source": "USD", "target": "TRY", "symbol": "₺", "rate": 50.0})
+        self.assertEqual({p["symbol"] for p in out["currencies"]}, {"USD/TRY", "CAD/TRY"})
+        self.assertEqual([c["code"] for c in out["display_currencies"]], ["USD", "CAD", "TRY"])
+        self.assertAlmostEqual(out["assets"][0]["price"], 6.0)  # lira listing, normalized to USD
 
 
 class SearchUrlTests(unittest.TestCase):

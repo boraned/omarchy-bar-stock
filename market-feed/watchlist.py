@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """Watchlist editor for the bar ticker (used by its right-click popup).
 
-    watchlist.py list                 JSON {display_currency, currencies, assets}
-    watchlist.py search <query>       JSON [{symbol, name, exchange, type, added}]
-    watchlist.py add <symbol> [name]  add a symbol (checked against Yahoo first)
+    watchlist.py list                    JSON {display_currency, currencies, assets}
+    watchlist.py search <query>          JSON [{symbol, name, exchange, type, added}]
+    watchlist.py add <symbol> [name]     add a symbol (checked against Yahoo first)
     watchlist.py remove <symbol>
-    watchlist.py currency <code>      save the display currency (USD, CAD, TRY)
+    watchlist.py currency <code>         show prices in a listed currency
+    watchlist.py currency-add <code>     list a currency (checked against Yahoo first)
+    watchlist.py currency-remove <code>  unlist a currency (one always stays)
+    watchlist.py currencies              JSON [{code, symbol, name}] the menu can add
 """
 import json
 import re
@@ -38,11 +41,15 @@ def symbols(config):
     return {str(asset.get("symbol", "")).upper() for asset in config["assets"] if isinstance(asset, dict)}
 
 
+def currency_entry(code):
+    return {"code": code, "symbol": feed.currency_symbol(code), "name": feed.currency_name(code)}
+
+
 def cmd_list():
     config = feed.load_config()
     print(json.dumps({
-        "display_currency": config.get("display_currency", "USD"),
-        "currencies": [{"code": code, **info} for code, info in feed.CURRENCIES.items()],
+        "display_currency": feed.display_currency(config),
+        "currencies": [currency_entry(code) for code in feed.configured_currencies(config)],
         "assets": [{"symbol": a["symbol"], "label": a.get("label") or a["symbol"]}
                    for a in config["assets"] if isinstance(a, dict) and a.get("symbol")],
     }, ensure_ascii=False))
@@ -102,12 +109,47 @@ def cmd_remove(symbol):
 
 def cmd_currency(code):
     code = code.strip().upper()
-    if code not in feed.CURRENCIES:
-        sys.exit(f"watchlist: unsupported currency {code}")
     config = feed.load_config()
+    if code not in feed.configured_currencies(config):
+        sys.exit(f"watchlist: {code} is not one of your currencies; add it with currency-add")
     if config.get("display_currency") != code:
         config["display_currency"] = code
         feed.save_config(config)
+
+
+def cmd_currency_add(code):
+    code = code.strip().upper()
+    config = feed.load_config()
+    codes = feed.configured_currencies(config)
+    if code in codes:
+        return
+    if not re.fullmatch(r"[A-Z]{3}", code):
+        sys.exit(f"watchlist: {code} is not a currency code")
+    if code != "USD":
+        quoted = feed.fetch_quote(f"{code}=X")
+        if not quoted or not feed.positive(quoted[0]):
+            sys.exit(f"watchlist: no exchange rate for {code}")
+    config["currencies"] = codes + [code]
+    feed.save_config(config)
+
+
+def cmd_currency_remove(code):
+    code = code.strip().upper()
+    config = feed.load_config()
+    codes = feed.configured_currencies(config)
+    if code not in codes:
+        return
+    if len(codes) == 1:
+        sys.exit("watchlist: keep at least one currency")
+    shown = feed.display_currency(config)
+    config["currencies"] = [c for c in codes if c != code]
+    if shown == code:
+        config["display_currency"] = config["currencies"][0]
+    feed.save_config(config)
+
+
+def cmd_currencies():
+    print(json.dumps([currency_entry(code) for code in feed.CURRENCY_INFO], ensure_ascii=False))
 
 
 def main(argv):
@@ -122,6 +164,12 @@ def main(argv):
         cmd_remove(args[0])
     elif command == "currency" and len(args) == 1:
         cmd_currency(args[0])
+    elif command == "currency-add" and len(args) == 1:
+        cmd_currency_add(args[0])
+    elif command == "currency-remove" and len(args) == 1:
+        cmd_currency_remove(args[0])
+    elif command == "currencies" and not args:
+        cmd_currencies()
     else:
         sys.exit(__doc__.strip())
 

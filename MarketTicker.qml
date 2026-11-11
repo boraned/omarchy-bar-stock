@@ -13,6 +13,10 @@ Item {
   property var bar: null
   property string fontFamily: Style.font.family
   property string selectedCurrency: "USD"
+  // The currencies listed in the menu ({code, symbol}), and every currency
+  // the menu can add ({code, symbol, name}, loaded when adding starts).
+  property var currencies: [{ code: "USD", symbol: "$" }]
+  property var knownCurrencies: []
   property string feedStatus: ""
   property string richTicker: "<font color='#57d68d'><b>LOADING</b></font> market quotes…   "
   property real scrollOffset: 0
@@ -54,10 +58,15 @@ Item {
     ticker.trend = raw.status === "OFFLINE" || !isFinite(indexChange) ? "neutral" : indexChange >= 0 ? "up" : "down"
     ticker.feedStatus = String(raw.status || "")
     if (raw.currency.target) ticker.selectedCurrency = String(raw.currency.target)
+    if (Array.isArray(raw.display_currencies) && raw.display_currencies.length > 0
+        && pendingEdits.length === 0 && !editProc.running) ticker.currencies = raw.display_currencies
     var oldCycle = Math.max(1, marquee.implicitWidth / 4)
     var phase = ticker.scrollOffset % oldCycle
     var rate = raw.currency.rate === null ? null : Number(raw.currency.rate)
-    var symbol = escapeHtml(raw.currency.symbol || "")
+    var symbol = String(raw.currency.symbol || "")
+    // Letter symbols (CHF, kr, Rp) get a space before the number.
+    if (/[A-Za-z]$/.test(symbol)) symbol += " "
+    symbol = escapeHtml(symbol)
     var status = escapeHtml(raw.status || "OFFLINE")
     var statusColor = status === "LIVE" ? "#57d68d" : status === "PARTIAL" ? "#f2c14e" : "#ff6b6b"
     var html = status === "LIVE" ? "" : "<font color='" + statusColor + "'><b>" + status + "</b> " + escapeHtml(raw.message || "market data unavailable") + "</font>  ◈  "
@@ -122,6 +131,28 @@ Item {
     if (code === selectedCurrency) return
     selectedCurrency = code
     edit(["currency", code])
+  }
+
+  function hasCurrency(code) {
+    return currencies.some(function(item) { return item.code === code })
+  }
+
+  function addCurrency(entry) {
+    if (!entry || hasCurrency(entry.code)) return
+    currencies = currencies.concat([{ code: entry.code, symbol: entry.symbol }])
+    edit(["currency-add", entry.code])
+  }
+
+  // One currency always stays; removing the shown one shows the first left.
+  function removeCurrency(code) {
+    if (currencies.length < 2 || !hasCurrency(code)) return
+    currencies = currencies.filter(function(item) { return item.code !== code })
+    if (selectedCurrency === code) selectedCurrency = currencies[0].code
+    edit(["currency-remove", code])
+  }
+
+  function loadKnownCurrencies() {
+    if (knownCurrencies.length === 0 && !knownProc.running) knownProc.running = true
   }
 
   function isWatched(symbol) {
@@ -210,6 +241,8 @@ Item {
         try { data = JSON.parse(String(text || "null")) } catch (e) { data = null }
         if (!data || !Array.isArray(data.assets) || ticker.pendingEdits.length > 0 || editProc.running) return
         ticker.watchlist = data.assets
+        if (Array.isArray(data.currencies) && data.currencies.length > 0) ticker.currencies = data.currencies
+        if (data.display_currency) ticker.selectedCurrency = String(data.display_currency)
       }
     }
   }
@@ -217,6 +250,19 @@ Item {
   Process {
     id: editProc
     onExited: ticker.runNextEdit()
+  }
+
+  Process {
+    id: knownProc
+    command: ["python3", ticker.watchlistScript, "currencies"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        let data = null
+        try { data = JSON.parse(String(text || "null")) } catch (e) { data = null }
+        if (Array.isArray(data)) ticker.knownCurrencies = data
+      }
+    }
   }
 
   Process {

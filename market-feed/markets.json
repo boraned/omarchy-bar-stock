@@ -1,5 +1,6 @@
 {
   "display_currency": "USD",
+  "currencies": ["USD"],
   "refresh_seconds": 120,
   "assets": [
     {"symbol": "^GSPC", "label": "S&P 500", "digits": 2},
