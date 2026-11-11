@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "id": "omarchy-bar-stock",
+  "name": "Stock Ticker",
+  "version": "1.0.0",
+  "author": "boraned",
+  "license": "MIT",
+  "description": "Scrolling stock, crypto and currency quotes for the Omarchy bar. Right-click it to change the display currency and add or remove stocks.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Stock Ticker",
+    "description": "Scrolling stock, crypto and currency quotes",
+    "category": "Info",
+    "allowMultiple": false,
+    "defaultSection": "centerBegin",
+    "defaults": {
+      "width": 480
+    },
+    "schema": [
+      {
+        "key": "width",
+        "type": "integer",
+        "label": "Ticker width in pixels",
+        "defaultValue": 480
+      }
+    ]
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "display_currency": "USD",
+  "refresh_seconds": 120,
+  "assets": [
+    {"symbol": "^GSPC", "label": "S&P 500", "digits": 2},
+    {"symbol": "^DJI", "label": "Dow Jones", "digits": 2},
+    {"symbol": "^IXIC", "label": "NASDAQ", "digits": 2},
+    {"symbol": "AAPL", "label": "Apple", "digits": 2},
+    {"symbol": "MSFT", "label": "Microsoft", "digits": 2},
+    {"symbol": "NVDA", "label": "NVIDIA", "digits": 2},
+    {"symbol": "GOOGL", "label": "Alphabet", "digits": 2},
+    {"symbol": "AMZN", "label": "Amazon", "digits": 2},
+    {"symbol": "META", "label": "Meta", "digits": 2},
+    {"symbol": "TSLA", "label": "Tesla", "digits": 2},
+    {"symbol": "AVGO", "label": "Broadcom", "digits": 2},
+    {"symbol": "BRK-B", "label": "Berkshire", "digits": 2},
+    {"symbol": "JPM", "label": "JPMorgan", "digits": 2},
+    {"symbol": "NFLX", "label": "Netflix", "digits": 2},
+    {"symbol": "AMD", "label": "AMD", "digits": 2},
+    {"symbol": "GC=F", "label": "Gold", "digits": 2},
+    {"symbol": "CL=F", "label": "Crude Oil", "digits": 2},
+    {"symbol": "BTC-USD", "label": "Bitcoin", "digits": 0},
+    {"symbol": "ETH-USD", "label": "Ethereum", "digits": 2}
+  ]
+}
